@@ -15,13 +15,28 @@
 import Foundation
 
 public class CommandDispatcher {
+    public var environment: [String: String] = [:]
+    
     public init() {}
     
     public func execute(commandLine: String) {
-        // Very basic parsing for spaces
-        let parts = commandLine.split(separator: " ").map(String.init)
-        guard let cmd = parts.first else { return }
-        let args = Array(parts.dropFirst())
+        let tokens = parse(commandLine)
+        guard !tokens.isEmpty else { return }
+        
+        // Check for variable assignment
+        let firstToken = tokens[0]
+        if firstToken.contains("=") && !firstToken.hasPrefix("=") {
+            let parts = firstToken.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            if parts.count == 2 {
+                let varName = String(parts[0])
+                let varValue = String(parts[1])
+                environment[varName] = varValue
+                return // just assignment
+            }
+        }
+        
+        let cmd = tokens[0]
+        let args = Array(tokens.dropFirst())
         
         do {
             switch cmd {
@@ -42,5 +57,90 @@ public class CommandDispatcher {
         } catch {
             print("sash: \(cmd): error executing - \(error)")
         }
+    }
+    
+    private func parse(_ line: String) -> [String] {
+        var tokens: [String] = []
+        var currentToken = ""
+        var inSingleQuotes = false
+        var inDoubleQuotes = false
+        var escapeNext = false
+        var i = line.startIndex
+        
+        while i < line.endIndex {
+            let char = line[i]
+            
+            if escapeNext {
+                currentToken.append(char)
+                escapeNext = false
+            } else if char == "\\" {
+                if inSingleQuotes {
+                    currentToken.append(char)
+                } else {
+                    escapeNext = true
+                }
+            } else if char == "'" {
+                if inDoubleQuotes {
+                    currentToken.append(char)
+                } else {
+                    inSingleQuotes.toggle()
+                }
+            } else if char == "\"" {
+                if inSingleQuotes {
+                    currentToken.append(char)
+                } else {
+                    inDoubleQuotes.toggle()
+                }
+            } else if char == "$" {
+                if inSingleQuotes {
+                    currentToken.append(char)
+                } else {
+                    // Variable expansion
+                    var varName = ""
+                    i = line.index(after: i)
+                    if i < line.endIndex && line[i] == "{" {
+                        // ${var}
+                        i = line.index(after: i)
+                        while i < line.endIndex && line[i] != "}" {
+                            varName.append(line[i])
+                            i = line.index(after: i)
+                        }
+                    } else {
+                        // $var
+                        while i < line.endIndex && (line[i].isLetter || line[i].isNumber || line[i] == "_") {
+                            varName.append(line[i])
+                            i = line.index(after: i)
+                        }
+                        if i > line.startIndex {
+                            i = line.index(before: i) // step back so the loop advances properly
+                        }
+                    }
+                    if let value = environment[varName] {
+                        currentToken.append(value)
+                    } else if let envVal = getenv(varName) { // fallback to OS environment
+                        currentToken.append(String(cString: envVal))
+                    }
+                }
+            } else if char.isWhitespace {
+                if inSingleQuotes || inDoubleQuotes {
+                    currentToken.append(char)
+                } else {
+                    if !currentToken.isEmpty {
+                        tokens.append(currentToken)
+                        currentToken = ""
+                    }
+                }
+            } else {
+                currentToken.append(char)
+            }
+            
+            i = line.index(after: i)
+        }
+        
+        if !currentToken.isEmpty {
+            tokens.append(currentToken)
+        }
+        
+        return tokens
     }
 }
