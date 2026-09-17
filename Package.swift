@@ -1,3 +1,6 @@
+// swift-tools-version: 5.9
+// The swift-tools-version declares the minimum version of Swift required to build this package.
+
 // Copyright 2026 Aarav Ravindra Kharade
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,15 +15,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// swift-tools-version: 5.9
-// The swift-tools-version declares the minimum version of Swift required to build this package.
-
 import PackageDescription
 
 let package = Package(
     name: "sash",
     dependencies: [
-        .package(url: "https://github.com/ARK-OS-Swift-and-Linux/libark.git", branch: "main")
+        .package(url: "https://github.com/ARK-OS-Swift-and-Linux/libark.git", branch: "master")
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.

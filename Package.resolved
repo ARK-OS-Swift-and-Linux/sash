@@ -1,6 +1,15 @@
 {
   "pins" : [
     {
+      "identity" : "libark",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ARK-OS-Swift-and-Linux/libark.git",
+      "state" : {
+        "branch" : "master",
+        "revision" : "73fe1a11060c0ea64b6457f74df936270dd2e2f3"
+      }
+    },
+    {
       "identity" : "swift-argument-parser",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-argument-parser",

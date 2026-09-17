@@ -12,12 +12,37 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// The Swift Programming Language
-// https://docs.swift.org/swift-book
+import Glibc
+import libark
+import Foundation
 
 @main
 struct sash {
     static func main() {
-        print("Hello, world!")
+        print("sash 1.0 - The ARK-OS shell")
+        let dispatcher = CommandDispatcher()
+        
+        while true {
+            var cwd = [CChar](repeating: 0, count: 1024)
+            getcwd(&cwd, 1024)
+            let cwdStr = String(cString: cwd)
+            
+            print("\(cwdStr) $ ", terminator: "")
+            fflush(stdout)
+            
+            guard let line = readLine() else {
+                print("exit")
+                break
+            }
+            
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty { continue }
+            
+            if trimmed == "exit" {
+                break
+            }
+            
+            dispatcher.execute(commandLine: trimmed)
+        }
     }
 }
