@@ -33,7 +33,14 @@ struct sash {
             
             let line: String
             do {
-                line = try ln.getLine(prompt: prompt)
+                if isatty(STDIN_FILENO) == 1 {
+                    line = try ln.getLine(prompt: prompt)
+                } else {
+                    guard let r = readLine() else {
+                        break
+                    }
+                    line = r
+                }
             } catch {
                 print("exit")
                 break
