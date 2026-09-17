@@ -48,18 +48,116 @@ public struct Builtins {
     
     // MARK: - echo
     public static func echo(args: [String]) throws {
-        // Flags: -n, -e, -E, --help, --version
         var noNewline = false
-        var words: [String] = []
-        for arg in args {
-            if arg == "-n" { noNewline = true }
-            else if arg == "-e" { } // not implemented
-            else if arg == "-E" { } // not implemented
-            else if arg == "--help" { print("Usage: echo [-n] [args...]"); return }
-            else if arg == "--version" { print("echo (sash) 1.0"); return }
-            else { words.append(arg) }
+        var enableEscapes = false
+        
+        if let first = args.first {
+            if first == "--help" {
+                print("Usage: echo [-neE] [args...]")
+                return
+            } else if first == "--version" {
+                print("echo (sash) 1.0")
+                return
+            }
         }
-        let output = words.joined(separator: " ")
+        
+        var wordIndex = 0
+        for arg in args {
+            if arg.hasPrefix("-") && arg.count > 1 {
+                var isFlag = true
+                var tempNoNewline = noNewline
+                var tempEnableEscapes = enableEscapes
+                
+                for char in arg.dropFirst() {
+                    if char == "n" {
+                        tempNoNewline = true
+                    } else if char == "e" {
+                        tempEnableEscapes = true
+                    } else if char == "E" {
+                        tempEnableEscapes = false
+                    } else {
+                        isFlag = false
+                        break
+                    }
+                }
+                if isFlag {
+                    noNewline = tempNoNewline
+                    enableEscapes = tempEnableEscapes
+                    wordIndex += 1
+                    continue
+                }
+            }
+            break
+        }
+        
+        let words = wordIndex < args.count ? Array(args[wordIndex...]) : []
+        var output = words.joined(separator: " ")
+        
+        if enableEscapes {
+            var processed = ""
+            var i = output.startIndex
+            var stopOutput = false
+            
+            while i < output.endIndex {
+                let char = output[i]
+                if char == "\\" {
+                    let nextIndex = output.index(after: i)
+                    if nextIndex < output.endIndex {
+                        let nextChar = output[nextIndex]
+                        switch nextChar {
+                        case "n": processed.append("\n")
+                        case "t": processed.append("\t")
+                        case "r": processed.append("\r")
+                        case "b": processed.append("\u{08}") // backspace
+                        case "a": processed.append("\u{07}") // bell
+                        case "v": processed.append("\u{0B}") // vertical tab
+                        case "f": processed.append("\u{0C}") // form feed
+                        case "\\": processed.append("\\")
+                        case "c":
+                            noNewline = true
+                            stopOutput = true
+                        case "0":
+                            var octalValue = 0
+                            var count = 0
+                            var octalIndex = output.index(after: nextIndex)
+                            while octalIndex < output.endIndex && count < 3 {
+                                if let val = output[octalIndex].wholeNumberValue, val >= 0 && val <= 7 {
+                                    octalValue = octalValue * 8 + val
+                                    count += 1
+                                    octalIndex = output.index(after: octalIndex)
+                                } else {
+                                    break
+                                }
+                            }
+                            if count > 0 {
+                                if let scalar = UnicodeScalar(octalValue) {
+                                    processed.append(Character(scalar))
+                                }
+                                i = output.index(before: octalIndex)
+                            } else {
+                                processed.append("\0")
+                                i = nextIndex
+                            }
+                        default:
+                            processed.append("\\")
+                            processed.append(nextChar)
+                        }
+                        if stopOutput { break }
+                        if nextChar != "0" {
+                            i = nextIndex
+                        }
+                    } else {
+                        processed.append("\\")
+                    }
+                } else {
+                    processed.append(char)
+                }
+                if stopOutput { break }
+                i = output.index(after: i)
+            }
+            output = processed
+        }
+        
         if noNewline {
             print(output, terminator: "")
             fflush(stdout)
