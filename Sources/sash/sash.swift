@@ -1,4 +1,4 @@
-// Copyright 2026 ArkOS Authors
+// Copyright 2026 Aarav Ravindra Kharade
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
