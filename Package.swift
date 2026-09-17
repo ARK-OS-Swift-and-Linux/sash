@@ -20,7 +20,8 @@ import PackageDescription
 let package = Package(
     name: "sash",
     dependencies: [
-        .package(url: "https://github.com/ARK-OS-Swift-and-Linux/libark.git", branch: "master")
+        .package(url: "https://github.com/ARK-OS-Swift-and-Linux/libark.git", branch: "master"),
+        .package(url: "https://github.com/andybest/linenoise-swift", from: "0.0.3")
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
@@ -28,7 +29,8 @@ let package = Package(
         .executableTarget(
             name: "sash",
             dependencies: [
-                .product(name: "libark", package: "libark")
+                .product(name: "libark", package: "libark"),
+                .product(name: "LineNoise", package: "linenoise-swift")
             ]
         ),
         .testTarget(

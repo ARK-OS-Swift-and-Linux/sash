@@ -15,28 +15,34 @@
 import Glibc
 import libark
 import Foundation
+import LineNoise
 
 @main
 struct sash {
     static func main() {
         print("sash 1.0 - The ARK-OS shell")
         let dispatcher = CommandDispatcher()
+        let ln = LineNoise()
         
         while true {
             var cwd = [CChar](repeating: 0, count: 1024)
             getcwd(&cwd, 1024)
             let cwdStr = String(cString: cwd)
             
-            print("\(cwdStr) $ ", terminator: "")
-            fflush(stdout)
+            let prompt = "\(cwdStr) $ "
             
-            guard let line = readLine() else {
+            let line: String
+            do {
+                line = try ln.getLine(prompt: prompt)
+            } catch {
                 print("exit")
                 break
             }
             
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty { continue }
+            
+            ln.addHistory(trimmed)
             
             if trimmed == "exit" {
                 break
