@@ -20,7 +20,7 @@ import PackageDescription
 let package = Package(
     name: "sash",
     dependencies: [
-        .package(name: "libark", path: "../libark")
+        .package(url: "https://github.com/ARK-OS-Swift-and-Linux/libark.git", branch: "main")
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
