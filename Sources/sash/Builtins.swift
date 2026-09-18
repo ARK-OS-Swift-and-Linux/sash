@@ -46,17 +46,17 @@ public struct Builtins {
         }
     }
     
-    // MARK: - echo
-    public static func echo(args: [String]) throws {
+    // MARK: - say
+    public static func say(args: [String]) throws {
         var noNewline = false
         var enableEscapes = false
         
         if let first = args.first {
             if first == "--help" {
-                print("Usage: echo [-neE] [args...]")
+                print("Usage: say [-neE] [args...]")
                 return
             } else if first == "--version" {
-                print("echo (sash) 1.0")
+                print("say (sash) 1.0")
                 return
             }
         }
@@ -183,25 +183,32 @@ public struct Builtins {
             else { files.append(arg) }
         }
         
-        for file in files {
-            do {
-                let content = try FileOperations.readFile(at: file)
-                if numberLines || numberNonBlank {
-                    let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
-                    var lineNum = 1
-                    for line in lines {
-                        if numberNonBlank && line.isEmpty {
-                            print("")
-                        } else {
-                            print(String(format: "%6d  %@", lineNum, String(line)))
-                            lineNum += 1
+        if files.isEmpty {
+            let data = FileHandle.standardInput.readDataToEndOfFile()
+            if let str = String(data: data, encoding: .utf8) {
+                print(str, terminator: "")
+            }
+        } else {
+            for file in files {
+                do {
+                    let content = try FileOperations.readFile(at: file)
+                    if numberLines || numberNonBlank {
+                        let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
+                        var lineNum = 1
+                        for line in lines {
+                            if numberNonBlank && line.isEmpty {
+                                print("")
+                            } else {
+                                print(String(format: "%6d  %@", lineNum, String(line)))
+                                lineNum += 1
+                            }
                         }
+                    } else {
+                        print(content, terminator: "")
                     }
-                } else {
-                    print(content, terminator: "")
+                } catch {
+                    print("cat: \(file): No such file or directory")
                 }
-            } catch {
-                print("cat: \(file): No such file or directory")
             }
         }
     }
@@ -405,4 +412,144 @@ public struct Builtins {
             }
         }
     }
+
+    public static func test(args: [String]) throws -> Bool {
+        // Simple test implementation
+        if args.isEmpty { return false }
+        
+        if args.count == 1 {
+            return !args[0].isEmpty
+        }
+        
+        if args.count == 2 {
+            let op = args[0]
+            let val = args[1]
+            switch op {
+            case "-z": return val.isEmpty
+            case "-n": return !val.isEmpty
+            case "-f":
+                var isDir: ObjCBool = false
+                let exists = FileManager.default.fileExists(atPath: val, isDirectory: &isDir)
+                return exists && !isDir.boolValue
+            case "-d":
+                var isDir: ObjCBool = false
+                let exists = FileManager.default.fileExists(atPath: val, isDirectory: &isDir)
+                return exists && isDir.boolValue
+            case "-e":
+                return FileManager.default.fileExists(atPath: val)
+            default:
+                return false
+            }
+        }
+        
+        if args.count == 3 {
+            let v1 = args[0]
+            let op = args[1]
+            let v2 = args[2]
+            
+            if op == "=" || op == "==" { return v1 == v2 }
+            if op == "!=" { return v1 != v2 }
+            
+            if let n1 = Int(v1), let n2 = Int(v2) {
+                switch op {
+                case "-eq": return n1 == n2
+                case "-ne": return n1 != n2
+                case "-lt": return n1 < n2
+                case "-le": return n1 <= n2
+                case "-gt": return n1 > n2
+                case "-ge": return n1 >= n2
+                default: return false
+                }
+            }
+            return false
+        }
+        
+        return false
+    }
+    
+    public static func printf(args: [String]) throws {
+        guard !args.isEmpty else { return }
+        
+        var format = args[0]
+        
+        // Handle basic escapes
+        format = format.replacingOccurrences(of: "\\n", with: "\n")
+        format = format.replacingOccurrences(of: "\\t", with: "\t")
+        format = format.replacingOccurrences(of: "\\r", with: "\r")
+        format = format.replacingOccurrences(of: "\\\\", with: "\\")
+        
+        let formatArgs = Array(args.dropFirst())
+        var argIndex = 0
+        
+        var result = ""
+        var i = format.startIndex
+        while i < format.endIndex {
+            let char = format[i]
+            if char == "%" && format.index(after: i) < format.endIndex {
+                let nextChar = format[format.index(after: i)]
+                if nextChar == "s" || nextChar == "d" {
+                    if argIndex < formatArgs.count {
+                        result.append(formatArgs[argIndex])
+                        argIndex += 1
+                    }
+                    i = format.index(after: format.index(after: i))
+                    continue
+                } else if nextChar == "%" {
+                    result.append("%")
+                    i = format.index(after: format.index(after: i))
+                    continue
+                }
+            }
+            result.append(char)
+            i = format.index(after: i)
+        }
+        
+        print(result, terminator: "")
+        fflush(stdout)
+    }    
+    private static let builtinList = ["cd", "pwd", "ls", "cat", "say", "mkdir", "rmdir", "touch", "rm", "mv", "cp", "[", "test", "printf", "type", "command", "help"]
+    
+
+
+    public static func typeCmd(args: [String], environment: [String: String]) throws {
+        for arg in args {
+            if builtinList.contains(arg) {
+                print("\(arg) is a shell builtin")
+            } else if let path = PathResolver.resolveExecutable(arg, environment: environment) {
+                print("\(arg) is \(path)")
+            } else {
+                print("sash: type: \(arg): not found")
+            }
+        }
+    }
+    
+    public static func command(args: [String], environment: [String: String]) throws {
+        if args.first == "-V" || args.first == "-v" {
+            let subArgs = Array(args.dropFirst())
+            try typeCmd(args: subArgs, environment: environment)
+        }
+    }
+    
+    public static func help(args: [String]) throws {
+        if args.isEmpty {
+            print("sash 1.0 builtins: \(builtinList.joined(separator: ", "))")
+            return
+        }
+        
+        let cmd = args[0]
+        if cmd == "say" {
+            print("say: say [-n] [-e] [-E] [arg ...]")
+            print("    Write arguments to the standard output.")
+            print("    Options:")
+            print("      -n        do not append a newline")
+            print("      -e        enable interpretation of backslash escapes")
+            print("      -E        disable interpretation of backslash escapes (default)")
+        } else if builtinList.contains(cmd) {
+            print("\(cmd): shell builtin")
+        } else {
+            print("sash: help: no help topics match `\(cmd)'.")
+        }
+    }
+
 }
+

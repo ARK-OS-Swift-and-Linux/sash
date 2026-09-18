@@ -1,15 +1,6 @@
 {
-  "originHash" : "e375efe0eebc68394a34884bcec1effb343398f9634da6f2b1f9c560ee16ba30",
+  "originHash" : "6d9c0f1b56058ea76228c82c46b8a75337583702b2e34cf2c0c530a8fe8560b3",
   "pins" : [
-    {
-      "identity" : "libark",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/ARK-OS-Swift-and-Linux/libark.git",
-      "state" : {
-        "branch" : "master",
-        "revision" : "d2477c2d67d4ff83ce3dadeea38b828e3a183f0f"
-      }
-    },
     {
       "identity" : "linenoise-swift",
       "kind" : "remoteSourceControl",

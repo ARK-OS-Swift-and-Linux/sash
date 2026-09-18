@@ -20,16 +20,45 @@ import LineNoise
 @main
 struct sash {
     static func main() {
-        print("sash 1.0 - The ARK-OS shell")
         let dispatcher = CommandDispatcher()
+        let args = CommandLine.arguments
+        if args.count > 1 {
+            if args[1] == "-c" && args.count > 2 {
+                dispatcher.execute(commandLine: args[2])
+                return
+            }
+            let scriptPath = args[1]
+            dispatcher.scriptName = scriptPath
+            dispatcher.positionalArguments = Array(args.dropFirst(2))
+            
+            if let fullScript = try? String(contentsOfFile: scriptPath) {
+                dispatcher.execute(script: fullScript)
+            } else {
+                print("sash: cannot read file: \(scriptPath)")
+            }
+            return
+        }
+
+        print("sash 1.0 - The ARK-OS shell")
         let ln = LineNoise()
+        
+        // Try to read ~/.sashconf.ark
+        if let home = getenv("HOME").flatMap({ String(cString: $0) }) {
+            let confPath = home + "/.sashconf.ark"
+            if let fullScript = try? String(contentsOfFile: confPath) {
+                dispatcher.execute(script: fullScript)
+            }
+        }
         
         while true {
             var cwd = [CChar](repeating: 0, count: 1024)
             getcwd(&cwd, 1024)
             let cwdStr = String(cString: cwd)
             
-            let prompt = "\(cwdStr) $ "
+            var ps1 = dispatcher.environment["PS1"] ?? "\\w $ "
+            ps1 = ps1.replacingOccurrences(of: "\\w", with: cwdStr)
+            
+            let prompt = ps1
             
             let line: String
             do {

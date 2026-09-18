@@ -20,7 +20,7 @@ import PackageDescription
 let package = Package(
     name: "sash",
     dependencies: [
-        .package(url: "https://github.com/ARK-OS-Swift-and-Linux/libark.git", branch: "master"),
+        .package(path: "../libark"),
         .package(url: "https://github.com/andybest/linenoise-swift", from: "0.0.3")
     ],
     targets: [
