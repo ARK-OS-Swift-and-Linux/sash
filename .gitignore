@@ -1,7 +1,7 @@
 .DS_Store
 /.build
 /Packages
-xcuserdata/
+userdata/
 DerivedData/
 .swiftpm/configuration/registries.json
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
@@ -10,3 +10,6 @@ DerivedData/
 .py
 .ark
 ls.md
+/sash
+*.target
+*-target

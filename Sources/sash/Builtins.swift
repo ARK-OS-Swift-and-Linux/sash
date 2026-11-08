@@ -12,448 +12,564 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import Foundation
 #if canImport(Musl)
 import Musl
-#else
+#elseif canImport(Glibc)
 import Glibc
 #endif
-import libark
+import Foundation
+
+@inline(__always)
+func posix_uname(_ u: inout utsname) -> Int32 {
+    #if canImport(Musl)
+    return Musl.uname(&u)
+    #elseif canImport(Glibc)
+    return Glibc.uname(&u)
+    #else
+    return uname(&u)
+    #endif
+}
+
+@inline(__always)
+func posix_rmdir(_ path: String) -> Int32 {
+    #if canImport(Musl)
+    return Musl.rmdir(path)
+    #elseif canImport(Glibc)
+    return Glibc.rmdir(path)
+    #else
+    return rmdir(path)
+    #endif
+}
+
+@inline(__always)
+func posix_kill(_ pid: pid_t, _ sig: Int32) -> Int32 {
+    #if canImport(Musl)
+    return Musl.kill(pid, sig)
+    #elseif canImport(Glibc)
+    return Glibc.kill(pid, sig)
+    #else
+    return kill(pid, sig)
+    #endif
+}
+
+@inline(__always)
+func posix_mkdir(_ path: String, _ mode: mode_t) -> Int32 {
+    #if canImport(Musl)
+    return Musl.mkdir(path, mode)
+    #elseif canImport(Glibc)
+    return Glibc.mkdir(path, mode)
+    #else
+    return mkdir(path, mode)
+    #endif
+}
 
 public struct Builtins {
-    
+    public static let builtinList: [String] = [
+        "help", "cd", "pwd", "ls", "cat", "echo", "say",
+        "mkdir", "rmdir", "touch", "rm", "mv", "cp",
+        "clear", "uname", "ps", "free", "kill", "jobs",
+        "export", "test", "[", "exit"
+    ]
+
+    // MARK: - help
+    public static func help(args: [String]) {
+        if args.isEmpty {
+            print("sash 1.0 - The ARK-OS Interactive Shell")
+            print("Builtin commands:")
+            print("  \(builtinList.joined(separator: ", "))")
+            print("Type 'help <command>' for specific command information.")
+            return
+        }
+        let cmd = args[0]
+        switch cmd {
+        case "cd":
+            print("cd [dir]       Change current working directory (default: $HOME or /)")
+        case "pwd":
+            print("pwd            Print current working directory")
+        case "ls":
+            print("ls [-l] [-a]   List directory contents")
+        case "cat":
+            print("cat [file...]  Display content of files")
+        case "echo", "say":
+            print("echo [-n] [-e] [text...] Print arguments to stdout")
+        case "mkdir":
+            print("mkdir [-p] dir Create directories")
+        case "rmdir":
+            print("rmdir dir      Remove empty directory")
+        case "touch":
+            print("touch file...  Create or update modification time")
+        case "rm":
+            print("rm [-r] [-f]   Remove files or directories")
+        case "clear":
+            print("clear          Clear terminal display")
+        case "uname":
+            print("uname [-a]     Print operating system information")
+        case "ps":
+            print("ps             Print process status table from /proc")
+        case "free":
+            print("free           Display system memory usage from /proc/meminfo")
+        case "kill":
+            print("kill [-sig] pid Send signal to a process")
+        case "jobs":
+            print("jobs           List background jobs")
+        case "export":
+            print("export [K=V]   Set environment variable")
+        case "exit":
+            print("exit [code]    Exit the shell")
+        default:
+            if builtinList.contains(cmd) {
+                print("\(cmd): shell builtin command")
+            } else {
+                print("sash: help: no help topics match '\(cmd)'.")
+            }
+        }
+    }
+
     // MARK: - pwd
-    public static func pwd(args: [String]) throws {
-        // Flags: -L, -P, --help, --version, -0
-        if args.contains("--help") {
-            print("Usage: pwd [-L|-P]")
-            return
-        }
+    public static func pwd(args: [String]) {
+        _ = args
         var buf = [CChar](repeating: 0, count: 1024)
-        guard getcwd(&buf, 1024) != nil else {
-            print("pwd: error")
-            return
+        if getcwd(&buf, 1024) != nil {
+            print(String(cString: buf))
+        } else {
+            perror("pwd")
         }
-        print(String(cString: buf))
     }
-    
+
     // MARK: - cd
-    public static func cd(args: [String]) throws {
-        // Flags: -L, -P, -e, -@, --help
-        if args.contains("--help") {
-            print("Usage: cd [dir]")
-            return
+    public static func cd(args: [String], environment: inout [String: String]) {
+        let target: String
+        if args.isEmpty {
+            target = environment["HOME"] ?? getenv("HOME").flatMap { String(cString: $0) } ?? "/"
+        } else if args[0] == "-" {
+            target = environment["OLDPWD"] ?? "/"
+            print(target)
+        } else {
+            target = args[0]
         }
-        let target = args.first(where: { !$0.hasPrefix("-") }) ?? "/"
+
+        var currentBuf = [CChar](repeating: 0, count: 1024)
+        if getcwd(&currentBuf, 1024) != nil {
+            environment["OLDPWD"] = String(cString: currentBuf)
+        }
+
         if chdir(target) != 0 {
-            print("cd: \(target): No such file or directory")
+            perror("sash: cd: \(target)")
+        } else {
+            var newBuf = [CChar](repeating: 0, count: 1024)
+            if getcwd(&newBuf, 1024) != nil {
+                environment["PWD"] = String(cString: newBuf)
+            }
         }
     }
-    
-    // MARK: - say
-    public static func say(args: [String]) throws {
+
+    // MARK: - echo / say
+    public static func echo(args: [String]) {
         var noNewline = false
         var enableEscapes = false
-        
-        if let first = args.first {
-            if first == "--help" {
-                print("Usage: say [-neE] [args...]")
-                return
-            } else if first == "--version" {
-                print("say (sash) 1.0")
-                return
-            }
-        }
-        
         var wordIndex = 0
-        for arg in args {
-            if arg.hasPrefix("-") && arg.count > 1 {
-                var isFlag = true
-                var tempNoNewline = noNewline
-                var tempEnableEscapes = enableEscapes
-                
-                for char in arg.dropFirst() {
-                    if char == "n" {
-                        tempNoNewline = true
-                    } else if char == "e" {
-                        tempEnableEscapes = true
-                    } else if char == "E" {
-                        tempEnableEscapes = false
-                    } else {
-                        isFlag = false
-                        break
-                    }
-                }
-                if isFlag {
-                    noNewline = tempNoNewline
-                    enableEscapes = tempEnableEscapes
-                    wordIndex += 1
-                    continue
-                }
+
+        while wordIndex < args.count {
+            let arg = args[wordIndex]
+            if arg == "-n" {
+                noNewline = true
+            } else if arg == "-e" {
+                enableEscapes = true
+            } else if arg == "-ne" || arg == "-en" {
+                noNewline = true
+                enableEscapes = true
+            } else {
+                break
             }
-            break
+            wordIndex += 1
         }
-        
-        let words = wordIndex < args.count ? Array(args[wordIndex...]) : []
-        var output = words.joined(separator: " ")
-        
+
+        var text = args[wordIndex...].joined(separator: " ")
         if enableEscapes {
-            var processed = ""
-            var i = output.startIndex
-            var stopOutput = false
-            
-            while i < output.endIndex {
-                let char = output[i]
-                if char == "\\" {
-                    let nextIndex = output.index(after: i)
-                    if nextIndex < output.endIndex {
-                        let nextChar = output[nextIndex]
-                        switch nextChar {
-                        case "n": processed.append("\n")
-                        case "t": processed.append("\t")
-                        case "r": processed.append("\r")
-                        case "b": processed.append("\u{08}") // backspace
-                        case "a": processed.append("\u{07}") // bell
-                        case "v": processed.append("\u{0B}") // vertical tab
-                        case "f": processed.append("\u{0C}") // form feed
-                        case "\\": processed.append("\\")
-                        case "c":
-                            noNewline = true
-                            stopOutput = true
-                        case "0":
-                            var octalValue = 0
-                            var count = 0
-                            var octalIndex = output.index(after: nextIndex)
-                            while octalIndex < output.endIndex && count < 3 {
-                                if let val = output[octalIndex].wholeNumberValue, val >= 0 && val <= 7 {
-                                    octalValue = octalValue * 8 + val
-                                    count += 1
-                                    octalIndex = output.index(after: octalIndex)
-                                } else {
-                                    break
-                                }
-                            }
-                            if count > 0 {
-                                if let scalar = UnicodeScalar(octalValue) {
-                                    processed.append(Character(scalar))
-                                }
-                                i = output.index(before: octalIndex)
-                            } else {
-                                processed.append("\0")
-                                i = nextIndex
-                            }
-                        default:
-                            processed.append("\\")
-                            processed.append(nextChar)
-                        }
-                        if stopOutput { break }
-                        if nextChar != "0" {
-                            i = nextIndex
-                        }
-                    } else {
-                        processed.append("\\")
-                    }
-                } else {
-                    processed.append(char)
-                }
-                if stopOutput { break }
-                i = output.index(after: i)
-            }
-            output = processed
+            text = text.replacingOccurrences(of: "\\n", with: "\n")
+            text = text.replacingOccurrences(of: "\\t", with: "\t")
+            text = text.replacingOccurrences(of: "\\r", with: "\r")
+            text = text.replacingOccurrences(of: "\\\\", with: "\\")
         }
-        
+
         if noNewline {
-            print(output, terminator: "")
+            print(text, terminator: "")
             fflush(stdout)
         } else {
-            print(output)
+            print(text)
         }
     }
-    
-    // MARK: - cat
-    public static func cat(args: [String]) throws {
-        // Flags: -n, -b, -E, -T, -s
-        var numberLines = false
-        var numberNonBlank = false
-        var files: [String] = []
-        
-        for arg in args {
-            if arg == "-n" { numberLines = true }
-            else if arg == "-b" { numberNonBlank = true }
-            else if arg == "-E" { } // not implemented
-            else if arg == "-T" { } // not implemented
-            else if arg == "-s" { } // not implemented
-            else if arg == "--help" { print("Usage: cat [-n|-b] [file...]"); return }
-            else { files.append(arg) }
-        }
-        
-        if files.isEmpty {
-            let data = FileHandle.standardInput.readDataToEndOfFile()
-            if let str = String(data: data, encoding: .utf8) {
-                print(str, terminator: "")
-            }
-        } else {
-            for file in files {
-                do {
-                    let content = try FileOperations.readFile(at: file)
-                    if numberLines || numberNonBlank {
-                        let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
-                        var lineNum = 1
-                        for line in lines {
-                            if numberNonBlank && line.isEmpty {
-                                print("")
-                            } else {
-                                print(String(format: "%6d  %@", lineNum, String(line)))
-                                lineNum += 1
+
+    // MARK: - clear
+    public static func clear() {
+        print("\u{001B}[2J\u{001B}[H", terminator: "")
+        fflush(stdout)
+    }
+
+    // MARK: - uname
+    public static func uname(args: [String]) {
+        _ = args
+        var u = utsname()
+        if posix_uname(&u) == 0 {
+            withUnsafePointer(to: &u.sysname) { sPtr in
+                withUnsafePointer(to: &u.nodename) { nPtr in
+                    withUnsafePointer(to: &u.release) { rPtr in
+                        withUnsafePointer(to: &u.version) { vPtr in
+                            withUnsafePointer(to: &u.machine) { mPtr in
+                                let sys = String(cString: UnsafeRawPointer(sPtr).assumingMemoryBound(to: CChar.self))
+                                let node = String(cString: UnsafeRawPointer(nPtr).assumingMemoryBound(to: CChar.self))
+                                let rel = String(cString: UnsafeRawPointer(rPtr).assumingMemoryBound(to: CChar.self))
+                                let ver = String(cString: UnsafeRawPointer(vPtr).assumingMemoryBound(to: CChar.self))
+                                let mach = String(cString: UnsafeRawPointer(mPtr).assumingMemoryBound(to: CChar.self))
+                                print("\(sys) \(node) \(rel) \(ver) \(mach)")
                             }
                         }
-                    } else {
-                        print(content, terminator: "")
                     }
-                } catch {
-                    print("cat: \(file): No such file or directory")
                 }
             }
+        } else {
+            print("Linux ARK-OS 7.2.10-zen1 x86_64")
         }
     }
-    
-    // MARK: - mkdir
-    public static func mkdir(args: [String]) throws {
-        // Flags: -p, -v, -m, --parents, --verbose
-        var p = false
-        var v = false
-        var dirs: [String] = []
-        
-        for arg in args {
-            if arg == "-p" || arg == "--parents" { p = true }
-            else if arg == "-v" || arg == "--verbose" { v = true }
-            else if arg == "-m" { } // ignored
-            else if arg == "--help" { print("Usage: mkdir [-p] [-v] dir..."); return }
-            else if !arg.hasPrefix("-") { dirs.append(arg) }
-        }
-        
-        for dir in dirs {
-            if p {
-                let parts = dir.split(separator: "/")
-                var current = dir.hasPrefix("/") ? "/" : ""
-                for part in parts {
-                    current += String(part) + "/"
-                    _ = Syscall.mkdir(path: current, mode: 0o755)
-                }
-                if v { print("mkdir: created directory '\(dir)'") }
-            } else {
-                let ret = Syscall.mkdir(path: dir, mode: 0o755)
-                if ret != 0 {
-                    print("mkdir: cannot create directory '\(dir)'")
-                } else if v {
-                    print("mkdir: created directory '\(dir)'")
-                }
-            }
-        }
-    }
-    
-    // MARK: - rmdir
-    public static func rmdir(args: [String]) throws {
-        // Flags: -p, -v, --ignore-fail-on-non-empty, --help, --version
-        var v = false
-        var dirs: [String] = []
-        for arg in args {
-            if arg == "-v" { v = true }
-            else if arg == "-p" { }
-            else if arg == "--help" { print("Usage: rmdir [-v] dir..."); return }
-            else if !arg.hasPrefix("-") { dirs.append(arg) }
-        }
-        for dir in dirs {
-            let ret = Syscall.rmdir(path: dir)
-            if ret != 0 {
-                print("rmdir: failed to remove '\(dir)'")
-            } else if v {
-                print("rmdir: removing directory, '\(dir)'")
-            }
-        }
-    }
-    
-    // MARK: - touch
-    public static func touch(args: [String]) throws {
-        // Flags: -a, -m, -c, -r, -d
-        var files: [String] = []
-        for arg in args {
-            if arg == "-a" || arg == "-m" || arg == "-c" || arg == "-r" || arg == "-d" { }
-            else if arg == "--help" { print("Usage: touch file..."); return }
-            else if !arg.hasPrefix("-") { files.append(arg) }
-        }
-        for file in files {
-            do {
-                _ = try FileOperations.readFile(at: file) // check if exists
-            } catch {
-                try FileOperations.writeFile(at: file, contents: "")
-            }
-        }
-    }
-    
-    // MARK: - rm
-    public static func rm(args: [String]) throws {
-        // Flags: -r, -f, -i, -v, -d
-        var r = false
-        var v = false
-        var files: [String] = []
-        for arg in args {
-            if arg == "-r" || arg == "-R" || arg == "--recursive" { r = true }
-            else if arg == "-f" || arg == "--force" { }
-            else if arg == "-v" || arg == "--verbose" { v = true }
-            else if arg == "-i" { }
-            else if arg == "-d" || arg == "--dir" { }
-            else if arg == "--help" { print("Usage: rm [-r] [-v] file..."); return }
-            else if !arg.hasPrefix("-") { files.append(arg) }
-        }
-        
-        for file in files {
-            if r {
-                // Not fully implemented recursive delete in libark
-                // Fallback to rmdir/unlink
-                _ = Syscall.unlink(path: file)
-                _ = Syscall.rmdir(path: file)
-            } else {
-                let ret = Syscall.unlink(path: file)
-                if ret != 0 {
-                    print("rm: cannot remove '\(file)'")
-                } else if v {
-                    print("removed '\(file)'")
-                }
-            }
-        }
-    }
-    
-    // MARK: - mv
-    public static func mv(args: [String]) throws {
-        // Flags: -i, -f, -v, -n, -u
-        var v = false
-        var sources: [String] = []
-        for arg in args {
-            if arg == "-v" || arg == "--verbose" { v = true }
-            else if arg == "-i" || arg == "-f" || arg == "-n" || arg == "-u" { }
-            else if arg == "--help" { print("Usage: mv [-v] source dest"); return }
-            else if !arg.hasPrefix("-") { sources.append(arg) }
-        }
-        guard sources.count >= 2 else {
-            print("mv: missing destination file operand")
-            return
-        }
-        let dest = sources.removeLast()
-        for src in sources {
-            let ret = Syscall.rename(oldPath: src, newPath: dest) // simple implementation
-            if ret != 0 {
-                print("mv: cannot move '\(src)' to '\(dest)'")
-            } else if v {
-                print("renamed '\(src)' -> '\(dest)'")
-            }
-        }
-    }
-    
-    // MARK: - cp
-    public static func cp(args: [String]) throws {
-        // Flags: -r, -i, -f, -v, -n
-        var v = false
-        var sources: [String] = []
-        for arg in args {
-            if arg == "-v" || arg == "--verbose" { v = true }
-            else if arg == "-r" || arg == "-i" || arg == "-f" || arg == "-n" { }
-            else if arg == "--help" { print("Usage: cp [-v] source dest"); return }
-            else if !arg.hasPrefix("-") { sources.append(arg) }
-        }
-        guard sources.count >= 2 else {
-            print("cp: missing destination file operand")
-            return
-        }
-        let dest = sources.removeLast()
-        for src in sources {
-            do {
-                let content = try FileOperations.readFile(at: src)
-                try FileOperations.writeFile(at: dest, contents: content)
-                if v {
-                    print("copied '\(src)' -> '\(dest)'")
-                }
-            } catch {
-                print("cp: cannot copy '\(src)'")
-            }
-        }
-    }
-    
+
     // MARK: - ls
-    public static func ls(args: [String]) throws {
-        // Flags: -l, -a, -h, -r, -t
-        var l = false
-        var a = false
+    public static func ls(args: [String]) {
+        var showAll = false
+        var longListing = false
         var targets: [String] = []
-        
+
         for arg in args {
-            if arg == "-l" { l = true }
-            else if arg == "-a" { a = true }
-            else if arg == "-h" || arg == "-r" || arg == "-t" { }
-            else if arg == "--help" { print("Usage: ls [-l] [-a] [dir...]"); return }
+            if arg == "-a" { showAll = true }
+            else if arg == "-l" { longListing = true }
+            else if arg == "-la" || arg == "-al" { showAll = true; longListing = true }
             else if !arg.hasPrefix("-") { targets.append(arg) }
         }
-        
+
         if targets.isEmpty {
             targets.append(".")
         }
-        
-        for target in targets {
-            let walker = DirectoryWalker(root: Path(target))
-            var count = 0
-            for entry in walker {
-                if !a && entry.name.hasPrefix(".") { continue }
-                if l {
-                    // simple format
-                    print("\(entry.type) \(entry.name)")
-                } else {
-                    print("\(entry.name)  ", terminator: "")
-                }
-                count += 1
+
+        for (idx, target) in targets.enumerated() {
+            if targets.count > 1 {
+                if idx > 0 { print("") }
+                print("\(target):")
             }
-            if !l && count > 0 {
+
+            guard let dir = opendir(target) else {
+                perror("sash: ls: \(target)")
+                continue
+            }
+            defer { closedir(dir) }
+
+            var entries: [(name: String, isDir: Bool, size: Int64)] = []
+            while let entry = readdir(dir) {
+                let name = withUnsafePointer(to: &entry.pointee.d_name) { ptr in
+                    String(cString: UnsafeRawPointer(ptr).assumingMemoryBound(to: CChar.self))
+                }
+                if !showAll && name.hasPrefix(".") {
+                    continue
+                }
+
+                let isDir = (entry.pointee.d_type == DT_DIR)
+                var size: Int64 = 0
+
+                if longListing {
+                    let subPath = (target == ".") ? name : "\(target)/\(name)"
+                    var st = stat()
+                    if stat(subPath, &st) == 0 {
+                        size = Int64(st.st_size)
+                    }
+                }
+                entries.append((name: name, isDir: isDir, size: size))
+            }
+
+            entries.sort { $0.name < $1.name }
+
+            if longListing {
+                for e in entries {
+                    let typeChar = e.isDir ? "d" : "-"
+                    print(String(format: "%srwxr-xr-x  %8lld  %@", typeChar, e.size, e.name))
+                }
+            } else {
+                for e in entries {
+                    if e.isDir {
+                        print("\u{001B}[1;34m\(e.name)/\u{001B}[0m  ", terminator: "")
+                    } else {
+                        print("\(e.name)  ", terminator: "")
+                    }
+                }
                 print("")
             }
         }
     }
 
-    public static func test(args: [String]) throws -> Bool {
-        // Simple test implementation
-        if args.isEmpty { return false }
-        
-        if args.count == 1 {
-            return !args[0].isEmpty
+    // MARK: - cat
+    public static func cat(args: [String]) {
+        if args.isEmpty {
+            // Read from stdin until EOF
+            var buf = [UInt8](repeating: 0, count: 4096)
+            while true {
+                let n = read(STDIN_FILENO, &buf, buf.count)
+                if n <= 0 { break }
+                write(STDOUT_FILENO, buf, n)
+            }
+            return
         }
-        
-        if args.count == 2 {
-            let op = args[0]
-            let val = args[1]
-            switch op {
-            case "-z": return val.isEmpty
-            case "-n": return !val.isEmpty
-            case "-f":
-                var isDir: ObjCBool = false
-                let exists = FileManager.default.fileExists(atPath: val, isDirectory: &isDir)
-                return exists && !isDir.boolValue
-            case "-d":
-                var isDir: ObjCBool = false
-                let exists = FileManager.default.fileExists(atPath: val, isDirectory: &isDir)
-                return exists && isDir.boolValue
-            case "-e":
-                return FileManager.default.fileExists(atPath: val)
-            default:
-                return false
+
+        for path in args {
+            let fd = open(path, O_RDONLY)
+            if fd < 0 {
+                perror("sash: cat: \(path)")
+                continue
+            }
+            var buf = [UInt8](repeating: 0, count: 4096)
+            while true {
+                let n = read(fd, &buf, buf.count)
+                if n <= 0 { break }
+                write(STDOUT_FILENO, buf, n)
+            }
+            close(fd)
+        }
+    }
+
+    // MARK: - touch
+    public static func touch(args: [String]) {
+        for path in args {
+            if path.hasPrefix("-") { continue }
+            let fd = open(path, O_WRONLY | O_CREAT, 0o644)
+            if fd >= 0 {
+                close(fd)
+            } else {
+                perror("sash: touch: \(path)")
             }
         }
-        
-        if args.count == 3 {
-            let v1 = args[0]
-            let op = args[1]
-            let v2 = args[2]
-            
+    }
+
+    // MARK: - mkdir
+    public static func mkdir(args: [String]) {
+        var createParents = false
+        var dirs: [String] = []
+
+        for arg in args {
+            if arg == "-p" { createParents = true }
+            else if !arg.hasPrefix("-") { dirs.append(arg) }
+        }
+
+        for dir in dirs {
+            if createParents {
+                var current = ""
+                for part in dir.split(separator: "/") {
+                    current += (current.isEmpty && dir.hasPrefix("/")) ? "/\(part)" : "/\(part)"
+                    _ = posix_mkdir(current, 0o755)
+                }
+            } else {
+                if posix_mkdir(dir, 0o755) != 0 {
+                    perror("sash: mkdir: \(dir)")
+                }
+            }
+        }
+    }
+
+    // MARK: - rmdir
+    public static func rmdir(args: [String]) {
+        for dir in args {
+            if dir.hasPrefix("-") { continue }
+            if posix_rmdir(dir) != 0 {
+                perror("sash: rmdir: \(dir)")
+            }
+        }
+    }
+
+    // MARK: - rm
+    public static func rm(args: [String]) {
+        var recursive = false
+        var force = false
+        var paths: [String] = []
+
+        for arg in args {
+            if arg == "-r" || arg == "-R" { recursive = true }
+            else if arg == "-f" { force = true }
+            else if arg == "-rf" || arg == "-fr" { recursive = true; force = true }
+            else if !arg.hasPrefix("-") { paths.append(arg) }
+        }
+
+        for path in paths {
+            if recursive {
+                removeRecursive(path: path, force: force)
+            } else {
+                if unlink(path) != 0 && !force {
+                    perror("sash: rm: \(path)")
+                }
+            }
+        }
+    }
+
+    private static func removeRecursive(path: String, force: Bool) {
+        var st = stat()
+        if lstat(path, &st) != 0 {
+            if !force { perror("sash: rm: \(path)") }
+            return
+        }
+
+        if (st.st_mode & S_IFMT) == S_IFDIR {
+            if let dir = opendir(path) {
+                while let entry = readdir(dir) {
+                    let name = withUnsafePointer(to: &entry.pointee.d_name) { ptr in
+                        String(cString: UnsafeRawPointer(ptr).assumingMemoryBound(to: CChar.self))
+                    }
+                    if name == "." || name == ".." { continue }
+                    removeRecursive(path: "\(path)/\(name)", force: force)
+                }
+                closedir(dir)
+            }
+            _ = posix_rmdir(path)
+        } else {
+            _ = unlink(path)
+        }
+    }
+
+    // MARK: - ps
+    public static func ps() {
+        guard let dir = opendir("/proc") else {
+            print("sash: ps: /proc is not mounted")
+            return
+        }
+        defer { closedir(dir) }
+
+        print(String(format: "%-7s %-8s %-6s %s", "PID", "TTY", "STAT", "CMD"))
+
+        var pids: [Int] = []
+        while let entry = readdir(dir) {
+            let name = withUnsafePointer(to: &entry.pointee.d_name) { ptr in
+                String(cString: UnsafeRawPointer(ptr).assumingMemoryBound(to: CChar.self))
+            }
+            if let pid = Int(name) {
+                pids.append(pid)
+            }
+        }
+        pids.sort()
+
+        for pid in pids {
+            let cmdlinePath = "/proc/\(pid)/cmdline"
+            var cmd = ""
+            if let data = try? Data(contentsOf: URL(fileURLWithPath: cmdlinePath)) {
+                let parts = data.split(separator: 0).compactMap { String(bytes: $0, encoding: .utf8) }
+                cmd = parts.joined(separator: " ")
+            }
+            if cmd.isEmpty {
+                // Read from /proc/[pid]/comm
+                if let comm = try? String(contentsOfFile: "/proc/\(pid)/comm") {
+                    cmd = "[\(comm.trimmingCharacters(in: .whitespacesAndNewlines))]"
+                } else {
+                    cmd = "[\(pid)]"
+                }
+            }
+            print(String(format: "%-7d %-8s %-6s %s", pid, "?", "S", cmd))
+        }
+    }
+
+    // MARK: - free
+    public static func free() {
+        guard let meminfo = try? String(contentsOfFile: "/proc/meminfo") else {
+            print("sash: free: cannot read /proc/meminfo")
+            return
+        }
+
+        var totalKB: Int64 = 0
+        var freeKB: Int64 = 0
+        var availKB: Int64 = 0
+
+        for line in meminfo.split(separator: "\n") {
+            let parts = line.split(whereSeparator: { $0.isWhitespace || $0 == ":" })
+            if parts.count >= 2 {
+                let key = parts[0]
+                if let val = Int64(parts[1]) {
+                    if key == "MemTotal" { totalKB = val }
+                    else if key == "MemFree" { freeKB = val }
+                    else if key == "MemAvailable" { availKB = val }
+                }
+            }
+        }
+
+        print(String(format: "%-12s %10s %10s %10s", "Type", "total", "free", "available"))
+        print(String(format: "%-12s %9lldK %9lldK %9lldK", "Mem:", totalKB, freeKB, availKB))
+    }
+
+    // MARK: - kill
+    public static func kill(args: [String]) {
+        var sig: Int32 = SIGTERM
+        var targetPid: pid_t = 0
+
+        for arg in args {
+            if arg.hasPrefix("-") {
+                let sigStr = String(arg.dropFirst())
+                if let num = Int32(sigStr) {
+                    sig = num
+                } else if sigStr == "9" || sigStr == "KILL" {
+                    sig = SIGKILL
+                } else if sigStr == "15" || sigStr == "TERM" {
+                    sig = SIGTERM
+                } else if sigStr == "2" || sigStr == "INT" {
+                    sig = SIGINT
+                }
+            } else if let p = Int32(arg) {
+                targetPid = p
+            }
+        }
+
+        guard targetPid > 0 else {
+            print("sash: kill: usage: kill [-sig] <pid>")
+            return
+        }
+
+        if posix_kill(targetPid, sig) != 0 {
+            perror("sash: kill: \(targetPid)")
+        }
+    }
+
+    // MARK: - jobs
+    public static func jobs() {
+        JobManager.shared.pollCompletedJobs()
+        let activeJobs = JobManager.shared.jobs
+        if activeJobs.isEmpty {
+            print("sash: no active background jobs")
+            return
+        }
+        for job in activeJobs {
+            let statusStr = job.isRunning ? "Running" : "Done"
+            print("[\(job.id)] + \(job.pid) \(statusStr)  \(job.command)")
+        }
+    }
+
+    // MARK: - test / [
+    public static func test(args: [String]) -> Bool {
+        var cleanArgs = args
+        if cleanArgs.last == "]" {
+            cleanArgs.removeLast()
+        }
+        if cleanArgs.isEmpty { return false }
+        if cleanArgs.count == 1 { return !cleanArgs[0].isEmpty }
+
+        if cleanArgs.count == 2 {
+            let op = cleanArgs[0]
+            let path = cleanArgs[1]
+            var st = stat()
+            switch op {
+            case "-z": return path.isEmpty
+            case "-n": return !path.isEmpty
+            case "-e": return stat(path, &st) == 0
+            case "-f": return stat(path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFREG
+            case "-d": return stat(path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR
+            default: return false
+            }
+        }
+
+        if cleanArgs.count == 3 {
+            let v1 = cleanArgs[0]
+            let op = cleanArgs[1]
+            let v2 = cleanArgs[2]
             if op == "=" || op == "==" { return v1 == v2 }
             if op == "!=" { return v1 != v2 }
-            
             if let n1 = Int(v1), let n2 = Int(v2) {
                 switch op {
                 case "-eq": return n1 == n2
@@ -465,95 +581,7 @@ public struct Builtins {
                 default: return false
                 }
             }
-            return false
         }
-        
         return false
     }
-    
-    public static func printf(args: [String]) throws {
-        guard !args.isEmpty else { return }
-        
-        var format = args[0]
-        
-        // Handle basic escapes
-        format = format.replacingOccurrences(of: "\\n", with: "\n")
-        format = format.replacingOccurrences(of: "\\t", with: "\t")
-        format = format.replacingOccurrences(of: "\\r", with: "\r")
-        format = format.replacingOccurrences(of: "\\\\", with: "\\")
-        
-        let formatArgs = Array(args.dropFirst())
-        var argIndex = 0
-        
-        var result = ""
-        var i = format.startIndex
-        while i < format.endIndex {
-            let char = format[i]
-            if char == "%" && format.index(after: i) < format.endIndex {
-                let nextChar = format[format.index(after: i)]
-                if nextChar == "s" || nextChar == "d" {
-                    if argIndex < formatArgs.count {
-                        result.append(formatArgs[argIndex])
-                        argIndex += 1
-                    }
-                    i = format.index(after: format.index(after: i))
-                    continue
-                } else if nextChar == "%" {
-                    result.append("%")
-                    i = format.index(after: format.index(after: i))
-                    continue
-                }
-            }
-            result.append(char)
-            i = format.index(after: i)
-        }
-        
-        print(result, terminator: "")
-        fflush(stdout)
-    }    
-    private static let builtinList = ["cd", "pwd", "ls", "cat", "say", "mkdir", "rmdir", "touch", "rm", "mv", "cp", "[", "test", "printf", "type", "command", "help"]
-    
-
-
-    public static func typeCmd(args: [String], environment: [String: String]) throws {
-        for arg in args {
-            if builtinList.contains(arg) {
-                print("\(arg) is a shell builtin")
-            } else if let path = PathResolver.resolveExecutable(arg, environment: environment) {
-                print("\(arg) is \(path)")
-            } else {
-                print("sash: type: \(arg): not found")
-            }
-        }
-    }
-    
-    public static func command(args: [String], environment: [String: String]) throws {
-        if args.first == "-V" || args.first == "-v" {
-            let subArgs = Array(args.dropFirst())
-            try typeCmd(args: subArgs, environment: environment)
-        }
-    }
-    
-    public static func help(args: [String]) throws {
-        if args.isEmpty {
-            print("sash 1.0 builtins: \(builtinList.joined(separator: ", "))")
-            return
-        }
-        
-        let cmd = args[0]
-        if cmd == "say" {
-            print("say: say [-n] [-e] [-E] [arg ...]")
-            print("    Write arguments to the standard output.")
-            print("    Options:")
-            print("      -n        do not append a newline")
-            print("      -e        enable interpretation of backslash escapes")
-            print("      -E        disable interpretation of backslash escapes (default)")
-        } else if builtinList.contains(cmd) {
-            print("\(cmd): shell builtin")
-        } else {
-            print("sash: help: no help topics match `\(cmd)'.")
-        }
-    }
-
 }
-

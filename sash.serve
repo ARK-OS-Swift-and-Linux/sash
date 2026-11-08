@@ -1,0 +1,9 @@
+# ARK-OS Service Definition: Interactive Shell
+name=sash
+exec=/bin/sash
+restart=always
+max_restarts=10
+restart_delay=1
+stop_timeout=5
+after=arkdiag
+requires=

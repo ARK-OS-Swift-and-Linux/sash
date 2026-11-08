@@ -16,43 +16,92 @@ import XCTest
 @testable import sash
 
 final class sashTests: XCTestCase {
-    
+
     func testCommandDispatcherParsesEmpty() throws {
         let dispatcher = CommandDispatcher()
-        // Ensure no crash on empty or whitespace
         dispatcher.execute(commandLine: "")
         dispatcher.execute(commandLine: "   ")
+        XCTAssertEqual(dispatcher.lastExitStatus, 0)
     }
-    
+
     func testEchoCommand() throws {
         let dispatcher = CommandDispatcher()
-        // we can't easily capture stdout without redirecting in XCTest,
-        // but we can ensure it doesn't crash or throw exceptions.
         dispatcher.execute(commandLine: "echo hello world")
+        XCTAssertEqual(dispatcher.lastExitStatus, 0)
         dispatcher.execute(commandLine: "echo -n no newline")
-        dispatcher.execute(commandLine: "echo --version")
+        XCTAssertEqual(dispatcher.lastExitStatus, 0)
     }
-    
-    func testTouchAndRmCommands() throws {
-        let fileName = "sash_test_file.txt"
+
+    func testFileRedirection() throws {
+        let fileName = "/tmp/sash_unit_test_\(UUID().uuidString).txt"
         let dispatcher = CommandDispatcher()
-        
-        // Touch should create the file
-        dispatcher.execute(commandLine: "touch \(fileName)")
-        
-        // Ensure it exists by doing an ls or cat (not crashing)
-        dispatcher.execute(commandLine: "cat \(fileName)")
-        
-        // Remove it
+
+        dispatcher.execute(commandLine: "echo test_payload > \(fileName)")
+        XCTAssertEqual(dispatcher.lastExitStatus, 0)
+
+        dispatcher.execute(commandLine: "echo second_line >> \(fileName)")
+        XCTAssertEqual(dispatcher.lastExitStatus, 0)
+
+        let content = try? String(contentsOfFile: fileName)
+        XCTAssertNotNil(content)
+        XCTAssertTrue(content?.contains("test_payload") == true)
+        XCTAssertTrue(content?.contains("second_line") == true)
+
         dispatcher.execute(commandLine: "rm \(fileName)")
+        XCTAssertEqual(dispatcher.lastExitStatus, 0)
     }
-    
-    func testMkdirAndRmdirCommands() throws {
-        let dirName = "sash_test_dir"
+
+    func testVariableAssignmentAndExpansion() throws {
         let dispatcher = CommandDispatcher()
-        
-        dispatcher.execute(commandLine: "mkdir \(dirName)")
-        dispatcher.execute(commandLine: "ls -a")
+        dispatcher.execute(commandLine: "FOO=bar")
+        XCTAssertEqual(dispatcher.environment["FOO"], "bar")
+
+        dispatcher.execute(commandLine: "export BAZ=qux")
+        XCTAssertEqual(dispatcher.environment["BAZ"], "qux")
+    }
+
+    func testTestCommandOperators() throws {
+        let dispatcher = CommandDispatcher()
+        dispatcher.execute(commandLine: "test 1 -eq 1")
+        XCTAssertEqual(dispatcher.lastExitStatus, 0)
+
+        dispatcher.execute(commandLine: "test 1 -eq 2")
+        XCTAssertEqual(dispatcher.lastExitStatus, 1)
+
+        dispatcher.execute(commandLine: "[ hello = hello ]")
+        XCTAssertEqual(dispatcher.lastExitStatus, 0)
+
+        dispatcher.execute(commandLine: "[ hello != world ]")
+        XCTAssertEqual(dispatcher.lastExitStatus, 0)
+    }
+
+    func testLogicalOperators() throws {
+        let dispatcher = CommandDispatcher()
+        dispatcher.execute(commandLine: "test 1 -eq 1 && echo success")
+        XCTAssertEqual(dispatcher.lastExitStatus, 0)
+
+        dispatcher.execute(commandLine: "test 1 -eq 2 || echo fallback")
+        XCTAssertEqual(dispatcher.lastExitStatus, 0)
+    }
+
+    func testDirectoryOperations() throws {
+        let dirName = "/tmp/sash_dir_\(UUID().uuidString)"
+        let dispatcher = CommandDispatcher()
+
+        dispatcher.execute(commandLine: "mkdir -p \(dirName)")
+        XCTAssertEqual(dispatcher.lastExitStatus, 0)
+
+        dispatcher.execute(commandLine: "test -d \(dirName)")
+        XCTAssertEqual(dispatcher.lastExitStatus, 0)
+
         dispatcher.execute(commandLine: "rmdir \(dirName)")
+        XCTAssertEqual(dispatcher.lastExitStatus, 0)
+    }
+
+    func testJobControlManager() throws {
+        JobManager.shared.initialize(terminalFd: STDIN_FILENO)
+        let job = JobManager.shared.addJob(pid: 99999, command: "sleep 10")
+        XCTAssertEqual(job.command, "sleep 10")
+        XCTAssertTrue(job.isRunning)
     }
 }

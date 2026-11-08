@@ -14,81 +14,128 @@
 
 #if canImport(Musl)
 import Musl
-#else
+#elseif canImport(Glibc)
 import Glibc
 #endif
-import libark
 import Foundation
-import LineNoise
 
 @main
 struct sash {
     static func main() {
+        // Ensure immediate interactive console output
+        setbuf(stdout, nil)
+        setbuf(stderr, nil)
+
         let dispatcher = CommandDispatcher()
         let args = CommandLine.arguments
-        if args.count > 1 {
-            if args[1] == "-c" && args.count > 2 {
-                dispatcher.execute(commandLine: args[2])
-                return
-            }
-            let scriptPath = args[1]
-            dispatcher.scriptName = scriptPath
-            dispatcher.positionalArguments = Array(args.dropFirst(2))
-            
-            if let fullScript = try? String(contentsOfFile: scriptPath) {
-                dispatcher.execute(script: fullScript)
-            } else {
-                print("sash: cannot read file: \(scriptPath)")
-            }
-            return
+
+        // If command-line string execution requested (-c "...")
+        if args.count > 2 && args[1] == "-c" {
+            dispatcher.execute(commandLine: args[2])
+            exit(dispatcher.exitCode)
         }
 
-        print("sash 1.0 - The ARK-OS shell")
-        let ln = LineNoise()
-        
-        // Try to read ~/.sashconf.ark
-        if let home = getenv("HOME").flatMap({ String(cString: $0) }) {
-            let confPath = home + "/.sashconf.ark"
-            if let fullScript = try? String(contentsOfFile: confPath) {
-                dispatcher.execute(script: fullScript)
+        // If executing a script file
+        if args.count > 1 && !args[1].hasPrefix("-") {
+            let scriptPath = args[1]
+            if let content = try? String(contentsOfFile: scriptPath) {
+                dispatcher.execute(script: content)
+                exit(dispatcher.exitCode)
+            } else {
+                print("sash: cannot open script: \(scriptPath)")
+                exit(1)
             }
         }
-        
-        while true {
-            var cwd = [CChar](repeating: 0, count: 1024)
-            getcwd(&cwd, 1024)
-            let cwdStr = String(cString: cwd)
-            
-            var ps1 = dispatcher.environment["PS1"] ?? "\\w $ "
-            ps1 = ps1.replacingOccurrences(of: "\\w", with: cwdStr)
-            
-            let prompt = ps1
-            
-            let line: String
-            do {
-                if isatty(STDIN_FILENO) == 1 {
-                    line = try ln.getLine(prompt: prompt)
-                } else {
-                    guard let r = readLine() else {
-                        break
-                    }
-                    line = r
+
+        // Interactive shell mode
+        JobManager.shared.initialize(terminalFd: STDIN_FILENO)
+
+        let isInteractive = JobManager.shared.isInteractive
+
+        if isInteractive {
+            print("==================================================")
+            print("sash 1.0 - ARK-OS Interactive Shell")
+            print("Type 'help' for builtins, 'exit' to terminate.")
+            print("==================================================")
+        }
+
+        // Try reading ~/.sashrc or /etc/ark/sashrc if present
+        if let rc = try? String(contentsOfFile: "/etc/ark/sashrc") {
+            dispatcher.execute(script: rc)
+        }
+
+        while !dispatcher.shouldExit {
+            // Reap any finished background jobs before displaying prompt
+            JobManager.shared.pollCompletedJobs()
+
+            let isRoot = (geteuid() == 0)
+            let promptSymbol = isRoot ? "#" : "$"
+
+            var cwdBuf = [CChar](repeating: 0, count: 1024)
+            let cwd = (getcwd(&cwdBuf, 1024) != nil) ? String(cString: cwdBuf) : ""
+
+            let prompt = isInteractive ? "arkos:\(cwd) \(promptSymbol) " : ""
+            if isInteractive {
+                print(prompt, terminator: "")
+                fflush(stdout)
+            }
+
+            guard let line = readCommandLine() else {
+                // EOF reached (Ctrl+D)
+                if isInteractive {
+                    print("\nexit")
                 }
-            } catch {
-                print("exit")
                 break
             }
-            
+
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty { continue }
-            
-            ln.addHistory(trimmed)
-            
-            if trimmed == "exit" {
-                break
+            if trimmed.isEmpty {
+                continue
             }
-            
+
             dispatcher.execute(commandLine: trimmed)
         }
+
+        exit(dispatcher.exitCode)
+    }
+
+    /// Read a line of input from stdin with basic backspace and newline support.
+    private static func readCommandLine() -> String? {
+        var input = ""
+        var buf: [UInt8] = [0]
+
+        while true {
+            let bytesRead = read(STDIN_FILENO, &buf, 1)
+            if bytesRead <= 0 {
+                return input.isEmpty ? nil : input
+            }
+
+            let byte = buf[0]
+
+            if byte == 0x0A { // Newline (\n)
+                break
+            } else if byte == 0x0D { // Carriage return (\r)
+                // Check if followed by \n
+                break
+            } else if byte == 0x04 { // EOT (Ctrl+D)
+                if input.isEmpty {
+                    return nil
+                }
+                break
+            } else if byte == 0x08 || byte == 0x7F { // Backspace or DEL
+                if !input.isEmpty {
+                    input.removeLast()
+                    if isatty(STDIN_FILENO) == 1 {
+                        // Erase character from display
+                        print("\u{0008} \u{0008}", terminator: "")
+                        fflush(stdout)
+                    }
+                }
+            } else if byte >= 0x20 { // Printable ASCII
+                input.append(Character(UnicodeScalar(byte)))
+            }
+        }
+
+        return input
     }
 }
