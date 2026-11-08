@@ -1,6 +1,7 @@
 # ARK-OS Service Definition: Interactive Shell
 name=sash
 exec=/bin/sash
+tty=/dev/tty1
 restart=always
 max_restarts=10
 restart_delay=1
