@@ -45,3 +45,4 @@ clean:
 	rm -rf sash sash.target .build
 
 .PHONY: all clean test target
+
